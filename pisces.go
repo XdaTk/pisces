@@ -597,7 +597,7 @@ func (pisces *Pisces) StartServer(s *http.Server) (err error) {
 				return err
 			}
 		}
-		pisces.Logger.WithField("addr", pisces.Listener.Addr()).Info("http server started on %s")
+		pisces.Logger.WithField("addr", pisces.Listener.Addr()).Info("http server started")
 		return s.Serve(pisces.Listener)
 	}
 	if pisces.TLSListener == nil {
