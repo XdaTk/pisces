@@ -2,7 +2,7 @@ package middleware
 
 import (
 	"fmt"
-	"github.com/xdatk/pisces"
+	"pisces"
 	"runtime"
 )
 

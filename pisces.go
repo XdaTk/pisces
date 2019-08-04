@@ -3,10 +3,10 @@ package pisces
 import (
 	"bytes"
 	stdContext "context"
-	"crypto/tls"
 	"errors"
 	"fmt"
 	"github.com/sirupsen/logrus"
+	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -21,9 +21,13 @@ import (
 
 const (
 	charsetUTF8 = "charset=UTF-8"
-	PROPFIND    = "PROPFIND"
+	// PROPFIND Method can be used on collection and property resources.
+	PROPFIND = "PROPFIND"
+	// REPORT Method can be used to get information about a resource, see rfc 3253
+	REPORT = "REPORT"
 )
 
+// MIME types
 const (
 	MIMEApplicationJSON            = "application/json"
 	MIMEApplicationJSONCharsetUTF8 = MIMEApplicationJSON + "; " + charsetUTF8
@@ -77,40 +81,32 @@ const (
 	HeaderAccessControlMaxAge           = "Access-Control-Max-Age"
 
 	// Security
-	HeaderStrictTransportSecurity = "Strict-Transport-Security"
-	HeaderXContentTypeOptions     = "X-Content-Type-Options"
-	HeaderXXSSProtection          = "X-XSS-Protection"
-	HeaderXFrameOptions           = "X-Frame-Options"
-	HeaderContentSecurityPolicy   = "Content-Security-Policy"
-	HeaderXCSRFToken              = "X-CSRF-Token"
+	HeaderStrictTransportSecurity         = "Strict-Transport-Security"
+	HeaderXContentTypeOptions             = "X-Content-Type-Options"
+	HeaderXXSSProtection                  = "X-XSS-Protection"
+	HeaderXFrameOptions                   = "X-Frame-Options"
+	HeaderContentSecurityPolicy           = "Content-Security-Policy"
+	HeaderContentSecurityPolicyReportOnly = "Content-Security-Policy-Report-Only"
+	HeaderXCSRFToken                      = "X-CSRF-Token"
 )
 
 type (
 	// Pisces is the top-level framework instance.
 	Pisces struct {
-		premiddleware    []MiddlewareFunc
-		middleware       []MiddlewareFunc
-		maxParam         *int
-		router           *Router
-		notFoundHandler  HandlerFunc
-		pool             sync.Pool
+		Logger           *logrus.Logger
 		Server           *http.Server
 		Listener         net.Listener
-		TLSServer        *http.Server
-		TLSListener      net.Listener
 		HTTPErrorHandler HTTPErrorHandler
 		StdLogger        *log.Logger
-		Logger           *logrus.Logger
+		pool             sync.Pool
+		maxParam         *int
+		router           *Router
+		routers          map[string]*Router
+		notFoundHandler  HandlerFunc
+		premiddleware    []MiddlewareFunc
+		middleware       []MiddlewareFunc
+		common
 	}
-
-	// Map defines a generic map of type `map[string]interface{}`.
-	Map map[string]interface{}
-
-	// HandlerFunc defines a function to serve HTTP requests.
-	HandlerFunc func(Context) error
-
-	// MiddlewareFunc defines a function to process middleware.
-	MiddlewareFunc func(HandlerFunc) HandlerFunc
 
 	// Route contains a handler and information for matching against requests.
 	Route struct {
@@ -119,9 +115,6 @@ type (
 		Name   string `json:"name"`
 	}
 
-	// HTTPErrorHandler is a centralized HTTP error handler.
-	HTTPErrorHandler func(error, Context)
-
 	// HTTPError represents an error that occurred while handling a request.
 	HTTPError struct {
 		Code     int
@@ -129,10 +122,20 @@ type (
 		Internal error // Stores the error returned by an external dependency
 	}
 
-	// i is the interface for Pisces and Group.
-	i interface {
-		GET(string, HandlerFunc, ...MiddlewareFunc) *Route
-	}
+	// MiddlewareFunc defines a function to process middleware.
+	MiddlewareFunc func(HandlerFunc) HandlerFunc
+
+	// HandlerFunc defines a function to serve HTTP requests.
+	HandlerFunc func(Context) error
+
+	// HTTPErrorHandler is a centralized HTTP error handler.
+	HTTPErrorHandler func(error, Context)
+
+	// Map defines a generic map of type `map[string]interface{}`.
+	Map map[string]interface{}
+
+	// Common struct for pisces & Group.
+	common struct{}
 )
 
 var (
@@ -147,274 +150,9 @@ var (
 		PROPFIND,
 		http.MethodPut,
 		http.MethodTrace,
+		REPORT,
 	}
 )
-
-// New creates an instance of Pisces.
-func New() (pisces *Pisces) {
-	pisces = &Pisces{
-		maxParam:  new(int),
-		Server:    new(http.Server),
-		TLSServer: new(http.Server),
-		Logger:    logrus.New(),
-	}
-	pisces.Server.Handler = pisces
-	pisces.TLSServer.Handler = pisces
-	pisces.HTTPErrorHandler = pisces.DefaultHTTPErrorHandler
-	pisces.Logger.SetLevel(logrus.InfoLevel)
-	pisces.StdLogger = log.New(pisces.Logger.Out, "pisces: ", 0)
-	pisces.pool.New = func() interface{} {
-		return pisces.NewContext(nil, nil)
-	}
-	pisces.router = NewRouter(pisces)
-	return
-}
-
-// Context
-// NewContext returns a Context instance.
-func (pisces *Pisces) NewContext(r *http.Request, w http.ResponseWriter) Context {
-	return &context{
-		request:  r,
-		response: NewResponse(w, pisces),
-		store:    make(Map),
-		pisces:   pisces,
-		pvalues:  make([]string, *pisces.maxParam),
-		handler:  NotFoundHandler,
-	}
-}
-
-// AcquireContext returns an empty `Context` instance from the pool.
-// You must return the context by calling `ReleaseContext()`.
-func (pisces *Pisces) AcquireContext() Context {
-	return pisces.pool.Get().(Context)
-}
-
-// ReleaseContext returns the `Context` instance back to the pool.
-// You must call it after `AcquireContext()`.
-func (pisces *Pisces) ReleaseContext(c Context) {
-	pisces.pool.Put(c)
-}
-
-// MiddlewareFunc
-// Pre adds middleware to the chain which is run before router.
-func (pisces *Pisces) Pre(middleware ...MiddlewareFunc) {
-	pisces.premiddleware = append(pisces.premiddleware, middleware...)
-}
-
-// Use adds middleware to the chain which is run after router.
-func (pisces *Pisces) Use(middleware ...MiddlewareFunc) {
-	pisces.middleware = append(pisces.middleware, middleware...)
-}
-
-// Use implements `Pisces#Use()` for sub-routes within the Group.
-func (g *Group) Use(middleware ...MiddlewareFunc) {
-	g.middleware = append(g.middleware, middleware...)
-	// Allow all requests to reach the group as they might get dropped if router
-	// doesn't find a match, making none of the group middleware process.
-	for _, p := range []string{"", "/*"} {
-		g.pisces.Any(path.Clean(g.prefix+p), func(c Context) error {
-			return NotFoundHandler(c)
-		}, g.middleware...)
-	}
-}
-
-// WrapMiddleware wraps `func(http.Handler) http.Handler` into `pisces.MiddlewareFunc`
-func WrapMiddleware(m func(http.Handler) http.Handler) MiddlewareFunc {
-	return func(next HandlerFunc) HandlerFunc {
-		return func(c Context) (err error) {
-			m(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				c.SetRequest(r)
-				err = next(c)
-			})).ServeHTTP(c.Response(), c.Request())
-			return
-		}
-	}
-}
-
-// Route
-// Router returns router.
-func (pisces *Pisces) Router() *Router {
-	return pisces.router
-}
-
-// CONNECT registers a new CONNECT route for a path with matching handler in the
-// router with optional route-level middleware.
-func (pisces *Pisces) CONNECT(path string, h HandlerFunc, m ...MiddlewareFunc) *Route {
-	return pisces.Add(http.MethodConnect, path, h, m...)
-}
-
-// DELETE registers a new DELETE route for a path with matching handler in the router
-// with optional route-level middleware.
-func (pisces *Pisces) DELETE(path string, h HandlerFunc, m ...MiddlewareFunc) *Route {
-	return pisces.Add(http.MethodDelete, path, h, m...)
-}
-
-// GET registers a new GET route for a path with matching handler in the router
-// with optional route-level middleware.
-func (pisces *Pisces) GET(path string, h HandlerFunc, m ...MiddlewareFunc) *Route {
-	return pisces.Add(http.MethodGet, path, h, m...)
-}
-
-// HEAD registers a new HEAD route for a path with matching handler in the
-// router with optional route-level middleware.
-func (pisces *Pisces) HEAD(path string, h HandlerFunc, m ...MiddlewareFunc) *Route {
-	return pisces.Add(http.MethodHead, path, h, m...)
-}
-
-// OPTIONS registers a new OPTIONS route for a path with matching handler in the
-// router with optional route-level middleware.
-func (pisces *Pisces) OPTIONS(path string, h HandlerFunc, m ...MiddlewareFunc) *Route {
-	return pisces.Add(http.MethodOptions, path, h, m...)
-}
-
-// PATCH registers a new PATCH route for a path with matching handler in the
-// router with optional route-level middleware.
-func (pisces *Pisces) PATCH(path string, h HandlerFunc, m ...MiddlewareFunc) *Route {
-	return pisces.Add(http.MethodPatch, path, h, m...)
-}
-
-// POST registers a new POST route for a path with matching handler in the
-// router with optional route-level middleware.
-func (pisces *Pisces) POST(path string, h HandlerFunc, m ...MiddlewareFunc) *Route {
-	return pisces.Add(http.MethodPost, path, h, m...)
-}
-
-// PUT registers a new PUT route for a path with matching handler in the
-// router with optional route-level middleware.
-func (pisces *Pisces) PUT(path string, h HandlerFunc, m ...MiddlewareFunc) *Route {
-	return pisces.Add(http.MethodPut, path, h, m...)
-}
-
-// TRACE registers a new TRACE route for a path with matching handler in the
-// router with optional route-level middleware.
-func (pisces *Pisces) TRACE(path string, h HandlerFunc, m ...MiddlewareFunc) *Route {
-	return pisces.Add(http.MethodTrace, path, h, m...)
-}
-
-// Any registers a new route for all HTTP methods and path with matching handler
-// in the router with optional route-level middleware.
-func (pisces *Pisces) Any(path string, handler HandlerFunc, middleware ...MiddlewareFunc) []*Route {
-	routes := make([]*Route, len(methods))
-	for i, m := range methods {
-		routes[i] = pisces.Add(m, path, handler, middleware...)
-	}
-	return routes
-}
-
-// Match registers a new route for multiple HTTP methods and path with matching
-// handler in the router with optional route-level middleware.
-func (pisces *Pisces) Match(methods []string, path string, handler HandlerFunc, middleware ...MiddlewareFunc) []*Route {
-	routes := make([]*Route, len(methods))
-	for i, m := range methods {
-		routes[i] = pisces.Add(m, path, handler, middleware...)
-	}
-	return routes
-}
-
-// Static registers a new route with path prefix to serve static files from the
-// provided root directory.
-func (pisces *Pisces) Static(prefix, root string) *Route {
-	if root == "" {
-		root = "." // For security we want to restrict to CWD.
-	}
-	return static(pisces, prefix, root)
-}
-
-func static(i i, prefix, root string) *Route {
-	h := func(c Context) error {
-		p, err := url.PathUnescape(c.Param("*"))
-		if err != nil {
-			return err
-		}
-		name := filepath.Join(root, path.Clean("/"+p)) // "/"+ for security
-		return c.File(name)
-	}
-	i.GET(prefix, h)
-	if prefix == "/" {
-		return i.GET(prefix+"*", h)
-	}
-
-	return i.GET(prefix+"/*", h)
-}
-
-// File registers a new route with path to serve a static file with optional route-level middleware.
-func (pisces *Pisces) File(path, file string, m ...MiddlewareFunc) *Route {
-	return pisces.GET(path, func(c Context) error {
-		return c.File(file)
-	}, m...)
-}
-
-// Add registers a new route for an HTTP method and path with matching handler
-// in the router with optional route-level middleware.
-func (pisces *Pisces) Add(method, path string, handler HandlerFunc, middleware ...MiddlewareFunc) *Route {
-	name := handlerName(handler)
-	pisces.router.Add(method, path, func(c Context) error {
-		h := handler
-		// Chain middleware
-		for i := len(middleware) - 1; i >= 0; i-- {
-			h = middleware[i](h)
-		}
-		return h(c)
-	})
-	r := &Route{
-		Method: method,
-		Path:   path,
-		Name:   name,
-	}
-	pisces.router.routes[method+path] = r
-	return r
-}
-
-// Group creates a new router group with prefix and optional group-level middleware.
-func (pisces *Pisces) Group(prefix string, m ...MiddlewareFunc) (g *Group) {
-	g = &Group{prefix: prefix, pisces: pisces}
-	g.Use(m...)
-	return
-}
-
-// URI generates a URI from handler.
-func (pisces *Pisces) URI(handler HandlerFunc, params ...interface{}) string {
-	name := handlerName(handler)
-	return pisces.Reverse(name, params...)
-}
-
-// URL is an alias for `URI` function.
-func (pisces *Pisces) URL(h HandlerFunc, params ...interface{}) string {
-	return pisces.URI(h, params...)
-}
-
-// Reverse generates an URL from route name and provided parameters.
-func (pisces *Pisces) Reverse(name string, params ...interface{}) string {
-	uri := new(bytes.Buffer)
-	ln := len(params)
-	n := 0
-	for _, r := range pisces.router.routes {
-		if r.Name == name {
-			for i, l := 0, len(r.Path); i < l; i++ {
-				if r.Path[i] == ':' && n < ln {
-					for ; i < l && r.Path[i] != '/'; i++ {
-					}
-					uri.WriteString(fmt.Sprintf("%v", params[n]))
-					n++
-				}
-				if i < l {
-					uri.WriteByte(r.Path[i])
-				}
-			}
-			break
-		}
-	}
-	return uri.String()
-}
-
-// Routes returns the registered routes.
-func (pisces *Pisces) Routes() []*Route {
-	routes := make([]*Route, 0, len(pisces.router.routes))
-	for _, v := range pisces.router.routes {
-		routes = append(routes, v)
-	}
-	return routes
-}
 
 // Errors
 var (
@@ -434,6 +172,7 @@ var (
 	ErrRendererNotRegistered       = errors.New("renderer not registered")
 	ErrInvalidRedirectCode         = errors.New("invalid redirect status code")
 	ErrCookieNotFound              = errors.New("cookie not found")
+	ErrInvalidCertOrKeyType        = errors.New("invalid cert or key type, must be string or []byte")
 )
 
 // Error handlers
@@ -447,28 +186,49 @@ var (
 	}
 )
 
-// NewHTTPError creates a new HTTPError instance.
-func NewHTTPError(code int, message ...interface{}) *HTTPError {
-	he := &HTTPError{Code: code, Message: http.StatusText(code)}
-	if len(message) > 0 {
-		he.Message = message[0]
+func New() (p *Pisces) {
+	p = &Pisces{}
+	p.Logger = logrus.New()
+	p.Logger.SetLevel(logrus.InfoLevel)
+
+	p.Server = new(http.Server)
+	p.Server.Handler = p
+	p.HTTPErrorHandler = p.DefaultHTTPErrorHandler
+	p.StdLogger = log.New(p.Logger.Out, "pisces: ", 0)
+	p.pool.New = func() interface{} {
+		return p.NewContext(nil, nil)
 	}
-	return he
+	p.maxParam = new(int)
+	p.router = NewRouter(p)
+	p.routers = map[string]*Router{}
+	return
 }
 
-// Error makes it compatible with `error` interface.
-func (he *HTTPError) Error() string {
-	return fmt.Sprintf("code=%d, message=%v", he.Code, he.Message)
+// NewContext returns a Context instance.
+func (p *Pisces) NewContext(r *http.Request, w http.ResponseWriter) Context {
+	return &context{
+		request:  r,
+		response: NewResponse(w, p),
+		store:    make(Map),
+		pisces:   p,
+		pvalues:  make([]string, *p.maxParam),
+		handler:  NotFoundHandler,
+	}
 }
 
-func (he *HTTPError) SetInternal(err error) *HTTPError {
-	he.Internal = err
-	return he
+// Router returns the default router.
+func (p *Pisces) Router() *Router {
+	return p.router
+}
+
+// Routers returns the map of host => router.
+func (p *Pisces) Routers() map[string]*Router {
+	return p.routers
 }
 
 // DefaultHTTPErrorHandler is the default HTTP error handler. It sends a JSON response
 // with status code.
-func (pisces *Pisces) DefaultHTTPErrorHandler(err error, c Context) {
+func (p *Pisces) DefaultHTTPErrorHandler(err error, c Context) {
 	var (
 		code = http.StatusInternalServerError
 		msg  interface{}
@@ -495,12 +255,322 @@ func (pisces *Pisces) DefaultHTTPErrorHandler(err error, c Context) {
 			err = c.JSON(code, msg)
 		}
 		if err != nil {
-			pisces.Logger.Error(err)
+			p.Logger.Error(err)
 		}
 	}
 }
 
-// Handler
+// Pre adds middleware to the chain which is run before router.
+func (p *Pisces) Pre(middleware ...MiddlewareFunc) {
+	p.premiddleware = append(p.premiddleware, middleware...)
+}
+
+// Use adds middleware to the chain which is run after router.
+func (p *Pisces) Use(middleware ...MiddlewareFunc) {
+	p.middleware = append(p.middleware, middleware...)
+}
+
+// CONNECT registers a new CONNECT route for a path with matching handler in the
+// router with optional route-level middleware.
+func (p *Pisces) CONNECT(path string, h HandlerFunc, m ...MiddlewareFunc) *Route {
+	return p.Add(http.MethodConnect, path, h, m...)
+}
+
+// DELETE registers a new DELETE route for a path with matching handler in the router
+// with optional route-level middleware.
+func (p *Pisces) DELETE(path string, h HandlerFunc, m ...MiddlewareFunc) *Route {
+	return p.Add(http.MethodDelete, path, h, m...)
+}
+
+// GET registers a new GET route for a path with matching handler in the router
+// with optional route-level middleware.
+func (p *Pisces) GET(path string, h HandlerFunc, m ...MiddlewareFunc) *Route {
+	return p.Add(http.MethodGet, path, h, m...)
+}
+
+// HEAD registers a new HEAD route for a path with matching handler in the
+// router with optional route-level middleware.
+func (p *Pisces) HEAD(path string, h HandlerFunc, m ...MiddlewareFunc) *Route {
+	return p.Add(http.MethodHead, path, h, m...)
+}
+
+// OPTIONS registers a new OPTIONS route for a path with matching handler in the
+// router with optional route-level middleware.
+func (p *Pisces) OPTIONS(path string, h HandlerFunc, m ...MiddlewareFunc) *Route {
+	return p.Add(http.MethodOptions, path, h, m...)
+}
+
+// PATCH registers a new PATCH route for a path with matching handler in the
+// router with optional route-level middleware.
+func (p *Pisces) PATCH(path string, h HandlerFunc, m ...MiddlewareFunc) *Route {
+	return p.Add(http.MethodPatch, path, h, m...)
+}
+
+// POST registers a new POST route for a path with matching handler in the
+// router with optional route-level middleware.
+func (p *Pisces) POST(path string, h HandlerFunc, m ...MiddlewareFunc) *Route {
+	return p.Add(http.MethodPost, path, h, m...)
+}
+
+// PUT registers a new PUT route for a path with matching handler in the
+// router with optional route-level middleware.
+func (p *Pisces) PUT(path string, h HandlerFunc, m ...MiddlewareFunc) *Route {
+	return p.Add(http.MethodPut, path, h, m...)
+}
+
+// TRACE registers a new TRACE route for a path with matching handler in the
+// router with optional route-level middleware.
+func (p *Pisces) TRACE(path string, h HandlerFunc, m ...MiddlewareFunc) *Route {
+	return p.Add(http.MethodTrace, path, h, m...)
+}
+
+// Any registers a new route for all HTTP methods and path with matching handler
+// in the router with optional route-level middleware.
+func (p *Pisces) Any(path string, handler HandlerFunc, middleware ...MiddlewareFunc) []*Route {
+	routes := make([]*Route, len(methods))
+	for i, m := range methods {
+		routes[i] = p.Add(m, path, handler, middleware...)
+	}
+	return routes
+}
+
+// Match registers a new route for multiple HTTP methods and path with matching
+// handler in the router with optional route-level middleware.
+func (p *Pisces) Match(methods []string, path string, handler HandlerFunc, middleware ...MiddlewareFunc) []*Route {
+	routes := make([]*Route, len(methods))
+	for i, m := range methods {
+		routes[i] = p.Add(m, path, handler, middleware...)
+	}
+	return routes
+}
+
+// Static registers a new route with path prefix to serve static files from the
+// provided root directory.
+func (p *Pisces) Static(prefix, root string) *Route {
+	if root == "" {
+		root = "." // For security we want to restrict to CWD.
+	}
+	return p.static(prefix, root, p.GET)
+}
+
+func (common) static(prefix, root string, get func(string, HandlerFunc, ...MiddlewareFunc) *Route) *Route {
+	h := func(c Context) error {
+		p, err := url.PathUnescape(c.Param("*"))
+		if err != nil {
+			return err
+		}
+		name := filepath.Join(root, path.Clean("/"+p)) // "/"+ for security
+		return c.File(name)
+	}
+	if prefix == "/" {
+		return get(prefix+"*", h)
+	}
+	return get(prefix+"/*", h)
+}
+
+func (common) file(path, file string, get func(string, HandlerFunc, ...MiddlewareFunc) *Route,
+	m ...MiddlewareFunc) *Route {
+	return get(path, func(c Context) error {
+		return c.File(file)
+	}, m...)
+}
+
+// File registers a new route with path to serve a static file with optional route-level middleware.
+func (p *Pisces) File(path, file string, m ...MiddlewareFunc) *Route {
+	return p.file(path, file, p.GET, m...)
+}
+
+func (p *Pisces) add(host, method, path string, handler HandlerFunc, middleware ...MiddlewareFunc) *Route {
+	name := handlerName(handler)
+	router := p.findRouter(host)
+	router.Add(method, path, func(c Context) error {
+		h := handler
+		// Chain middleware
+		for i := len(middleware) - 1; i >= 0; i-- {
+			h = middleware[i](h)
+		}
+		return h(c)
+	})
+	r := &Route{
+		Method: method,
+		Path:   path,
+		Name:   name,
+	}
+	p.router.routes[method+path] = r
+	return r
+}
+
+// Add registers a new route for an HTTP method and path with matching handler
+// in the router with optional route-level middleware.
+func (p *Pisces) Add(method, path string, handler HandlerFunc, middleware ...MiddlewareFunc) *Route {
+	return p.add("", method, path, handler, middleware...)
+}
+
+// Host creates a new router group for the provided host and optional host-level middleware.
+func (p *Pisces) Host(name string, m ...MiddlewareFunc) (g *Group) {
+	p.routers[name] = NewRouter(p)
+	g = &Group{host: name, pisces: p}
+	g.Use(m...)
+	return
+}
+
+// Group creates a new router group with prefix and optional group-level middleware.
+func (p *Pisces) Group(prefix string, m ...MiddlewareFunc) (g *Group) {
+	g = &Group{prefix: prefix, pisces: p}
+	g.Use(m...)
+	return
+}
+
+// URI generates a URI from handler.
+func (p *Pisces) URI(handler HandlerFunc, params ...interface{}) string {
+	name := handlerName(handler)
+	return p.Reverse(name, params...)
+}
+
+// URL is an alias for `URI` function.
+func (p *Pisces) URL(h HandlerFunc, params ...interface{}) string {
+	return p.URI(h, params...)
+}
+
+// Reverse generates an URL from route name and provided parameters.
+func (p *Pisces) Reverse(name string, params ...interface{}) string {
+	uri := new(bytes.Buffer)
+	ln := len(params)
+	n := 0
+	for _, r := range p.router.routes {
+		if r.Name == name {
+			for i, l := 0, len(r.Path); i < l; i++ {
+				if r.Path[i] == ':' && n < ln {
+					for ; i < l && r.Path[i] != '/'; i++ {
+					}
+					uri.WriteString(fmt.Sprintf("%v", params[n]))
+					n++
+				}
+				if i < l {
+					uri.WriteByte(r.Path[i])
+				}
+			}
+			break
+		}
+	}
+	return uri.String()
+}
+
+// Routes returns the registered routes.
+func (p *Pisces) Routes() []*Route {
+	routes := make([]*Route, 0, len(p.router.routes))
+	for _, v := range p.router.routes {
+		routes = append(routes, v)
+	}
+	return routes
+}
+
+// AcquireContext returns an empty `Context` instance from the pool.
+// You must return the context by calling `ReleaseContext()`.
+func (p *Pisces) AcquireContext() Context {
+	return p.pool.Get().(Context)
+}
+
+// ReleaseContext returns the `Context` instance back to the pool.
+// You must call it after `AcquireContext()`.
+func (p *Pisces) ReleaseContext(c Context) {
+	p.pool.Put(c)
+}
+
+// ServeHTTP implements `http.Handler` interface, which serves HTTP requests.
+func (p *Pisces) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Acquire context
+	c := p.pool.Get().(*context)
+	c.Reset(r, w)
+
+	h := NotFoundHandler
+
+	if p.premiddleware == nil {
+		p.findRouter(r.Host).Find(r.Method, getPath(r), c)
+		h = c.Handler()
+		h = applyMiddleware(h, p.middleware...)
+	} else {
+		h = func(c Context) error {
+			p.findRouter(r.Host).Find(r.Method, getPath(r), c)
+			h := c.Handler()
+			h = applyMiddleware(h, p.middleware...)
+			return h(c)
+		}
+		h = applyMiddleware(h, p.premiddleware...)
+	}
+
+	// Execute chain
+	if err := h(c); err != nil {
+		p.HTTPErrorHandler(err, c)
+	}
+
+	// Release context
+	p.pool.Put(c)
+}
+
+// Start starts an HTTP server.
+func (p *Pisces) Start(address string) error {
+	p.Server.Addr = address
+	return p.StartServer(p.Server)
+}
+
+func filepathOrContent(fileOrContent interface{}) (content []byte, err error) {
+	switch v := fileOrContent.(type) {
+	case string:
+		return ioutil.ReadFile(v)
+	case []byte:
+		return v, nil
+	default:
+		return nil, ErrInvalidCertOrKeyType
+	}
+}
+
+// StartServer starts a custom http server.
+func (p *Pisces) StartServer(s *http.Server) (err error) {
+	s.ErrorLog = p.StdLogger
+	s.Handler = p
+	if p.Listener == nil {
+		p.Listener, err = newListener(s.Addr)
+		if err != nil {
+			return err
+		}
+	}
+	p.Logger.WithField("addr", p.Listener.Addr()).Info("http server started")
+	return s.Serve(p.Listener)
+}
+
+// Close immediately stops the server.
+// It internally calls `http.Server#Close()`.
+func (p *Pisces) Close() error {
+	return p.Server.Close()
+}
+
+// Shutdown stops the server gracefully.
+// It internally calls `http.Server#Shutdown()`.
+func (p *Pisces) Shutdown(ctx stdContext.Context) error {
+	return p.Server.Shutdown(ctx)
+}
+
+// NewHTTPError creates a new HTTPError instance.
+func NewHTTPError(code int, message ...interface{}) *HTTPError {
+	he := &HTTPError{Code: code, Message: http.StatusText(code)}
+	if len(message) > 0 {
+		he.Message = message[0]
+	}
+	return he
+}
+
+// Error makes it compatible with `error` interface.
+func (he *HTTPError) Error() string {
+	return fmt.Sprintf("code=%d, message=%v", he.Code, he.Message)
+}
+
+// SetInternal sets error to HTTPError.Internal
+func (he *HTTPError) SetInternal(err error) *HTTPError {
+	he.Internal = err
+	return he
+}
+
 // WrapHandler wraps `http.Handler` into `pisces.HandlerFunc`.
 func WrapHandler(h http.Handler) HandlerFunc {
 	return func(c Context) error {
@@ -509,124 +579,17 @@ func WrapHandler(h http.Handler) HandlerFunc {
 	}
 }
 
-func handlerName(h HandlerFunc) string {
-	t := reflect.ValueOf(h).Type()
-	if t.Kind() == reflect.Func {
-		return runtime.FuncForPC(reflect.ValueOf(h).Pointer()).Name()
-	}
-	return t.String()
-}
-
-// Server
-
-// ServeHTTP implements `http.Handler` interface, which serves HTTP requests.
-func (pisces *Pisces) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Acquire context
-	c := pisces.pool.Get().(*context)
-	c.Reset(r, w)
-
-	h := NotFoundHandler
-
-	if pisces.premiddleware == nil {
-		pisces.router.Find(r.Method, getPath(r), c)
-		h = c.Handler()
-		for i := len(pisces.middleware) - 1; i >= 0; i-- {
-			h = pisces.middleware[i](h)
-		}
-	} else {
-		h = func(c Context) error {
-			pisces.router.Find(r.Method, getPath(r), c)
-			h := c.Handler()
-			for i := len(pisces.middleware) - 1; i >= 0; i-- {
-				h = pisces.middleware[i](h)
-			}
-			return h(c)
-		}
-		for i := len(pisces.premiddleware) - 1; i >= 0; i-- {
-			h = pisces.premiddleware[i](h)
+// WrapMiddleware wraps `func(http.Handler) http.Handler` into `pisces.MiddlewareFunc`
+func WrapMiddleware(m func(http.Handler) http.Handler) MiddlewareFunc {
+	return func(next HandlerFunc) HandlerFunc {
+		return func(c Context) (err error) {
+			m(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				c.SetRequest(r)
+				err = next(c)
+			})).ServeHTTP(c.Response(), c.Request())
+			return
 		}
 	}
-
-	// Execute chain
-	if err := h(c); err != nil {
-		pisces.HTTPErrorHandler(err, c)
-	}
-
-	// Release context
-	pisces.pool.Put(c)
-}
-
-// Start starts an HTTP server.
-func (pisces *Pisces) Start(address string) error {
-	pisces.Server.Addr = address
-	return pisces.StartServer(pisces.Server)
-}
-
-// StartTLS starts an HTTPS server.
-func (pisces *Pisces) StartTLS(address string, certFile, keyFile string) (err error) {
-	if certFile == "" || keyFile == "" {
-		return errors.New("invalid tls configuration")
-	}
-	s := pisces.TLSServer
-	s.TLSConfig = new(tls.Config)
-	s.TLSConfig.Certificates = make([]tls.Certificate, 1)
-	s.TLSConfig.Certificates[0], err = tls.LoadX509KeyPair(certFile, keyFile)
-	if err != nil {
-		return
-	}
-	return pisces.startTLS(address)
-}
-
-func (pisces *Pisces) startTLS(address string) error {
-	s := pisces.TLSServer
-	s.Addr = address
-	s.TLSConfig.NextProtos = append(s.TLSConfig.NextProtos, "h2")
-	return pisces.StartServer(pisces.TLSServer)
-}
-
-// StartServer starts a custom http server.
-func (pisces *Pisces) StartServer(s *http.Server) (err error) {
-	// Setup
-	s.ErrorLog = pisces.StdLogger
-	s.Handler = pisces
-
-	if s.TLSConfig == nil {
-		if pisces.Listener == nil {
-			pisces.Listener, err = newListener(s.Addr)
-			if err != nil {
-				return err
-			}
-		}
-		pisces.Logger.WithField("addr", pisces.Listener.Addr()).Info("http server started")
-		return s.Serve(pisces.Listener)
-	}
-	if pisces.TLSListener == nil {
-		l, err := newListener(s.Addr)
-		if err != nil {
-			return err
-		}
-		pisces.TLSListener = tls.NewListener(l, s.TLSConfig)
-	}
-	pisces.Logger.WithField("addr", pisces.TLSListener.Addr()).Info("https server started")
-	return s.Serve(pisces.TLSListener)
-}
-
-// Close immediately stops the server.
-// It internally calls `http.Server#Close()`.
-func (pisces *Pisces) Close() error {
-	if err := pisces.TLSServer.Close(); err != nil {
-		return err
-	}
-	return pisces.Server.Close()
-}
-
-// Shutdown stops server the gracefully.
-// It internally calls `http.Server#Shutdown()`.
-func (pisces *Pisces) Shutdown(ctx stdContext.Context) error {
-	if err := pisces.TLSServer.Shutdown(ctx); err != nil {
-		return err
-	}
-	return pisces.Server.Shutdown(ctx)
 }
 
 func getPath(r *http.Request) string {
@@ -637,6 +600,28 @@ func getPath(r *http.Request) string {
 	return path
 }
 
+func (p *Pisces) findRouter(host string) *Router {
+	if len(p.routers) > 0 {
+		if r, ok := p.routers[host]; ok {
+			return r
+		}
+	}
+	return p.router
+}
+
+func handlerName(h HandlerFunc) string {
+	t := reflect.ValueOf(h).Type()
+	if t.Kind() == reflect.Func {
+		return runtime.FuncForPC(reflect.ValueOf(h).Pointer()).Name()
+	}
+	return t.String()
+}
+
+// // PathUnescape is wraps `url.PathUnescape`
+// func PathUnescape(s string) (string, error) {
+// 	return url.PathUnescape(s)
+// }
+
 // tcpKeepAliveListener sets TCP keep-alive timeouts on accepted
 // connections. It's used by ListenAndServe and ListenAndServeTLS so
 // dead TCP connections (e.g. closing laptop mid-download) eventually
@@ -646,13 +631,14 @@ type tcpKeepAliveListener struct {
 }
 
 func (ln tcpKeepAliveListener) Accept() (c net.Conn, err error) {
-	tc, err := ln.AcceptTCP()
-	if err != nil {
+	if c, err = ln.AcceptTCP(); err != nil {
+		return
+	} else if err = c.(*net.TCPConn).SetKeepAlive(true); err != nil {
+		return
+	} else if err = c.(*net.TCPConn).SetKeepAlivePeriod(3 * time.Minute); err != nil {
 		return
 	}
-	_ = tc.SetKeepAlive(true)
-	_ = tc.SetKeepAlivePeriod(3 * time.Minute)
-	return tc, nil
+	return
 }
 
 func newListener(address string) (*tcpKeepAliveListener, error) {
@@ -661,4 +647,11 @@ func newListener(address string) (*tcpKeepAliveListener, error) {
 		return nil, err
 	}
 	return &tcpKeepAliveListener{l.(*net.TCPListener)}, nil
+}
+
+func applyMiddleware(h HandlerFunc, middleware ...MiddlewareFunc) HandlerFunc {
+	for i := len(middleware) - 1; i >= 0; i-- {
+		h = middleware[i](h)
+	}
+	return h
 }

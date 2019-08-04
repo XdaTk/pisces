@@ -1,7 +1,7 @@
 package middleware
 
 import (
-	"github.com/xdatk/pisces"
+	"pisces"
 )
 
 type (

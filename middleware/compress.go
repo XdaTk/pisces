@@ -3,11 +3,11 @@ package middleware
 import (
 	"bufio"
 	"compress/gzip"
-	"github.com/xdatk/pisces"
 	"io"
 	"io/ioutil"
 	"net"
 	"net/http"
+	"pisces"
 	"strings"
 )
 
@@ -66,7 +66,7 @@ func GzipWithConfig(config GzipConfig) pisces.MiddlewareFunc {
 			res := c.Response()
 			res.Header().Add(pisces.HeaderVary, pisces.HeaderAcceptEncoding)
 			if strings.Contains(c.Request().Header.Get(pisces.HeaderAcceptEncoding), gzipScheme) {
-				res.Header().Set(pisces.HeaderContentEncoding, gzipScheme)
+				res.Header().Set(pisces.HeaderContentEncoding, gzipScheme) // Issue #806
 				rw := res.Writer
 				w, err := gzip.NewWriterLevel(rw, config.Level)
 				if err != nil {
@@ -77,10 +77,13 @@ func GzipWithConfig(config GzipConfig) pisces.MiddlewareFunc {
 						if res.Header().Get(pisces.HeaderContentEncoding) == gzipScheme {
 							res.Header().Del(pisces.HeaderContentEncoding)
 						}
+						// We have to reset response to it's pristine state when
+						// nothing is written to body or error is returned.
+						// See issue #424, #407.
 						res.Writer = rw
 						w.Reset(ioutil.Discard)
 					}
-					_ = w.Close()
+					w.Close()
 				}()
 				grw := &gzipResponseWriter{Writer: w, ResponseWriter: rw}
 				res.Writer = grw
@@ -91,10 +94,10 @@ func GzipWithConfig(config GzipConfig) pisces.MiddlewareFunc {
 }
 
 func (w *gzipResponseWriter) WriteHeader(code int) {
-	if code == http.StatusNoContent {
+	if code == http.StatusNoContent { // Issue #489
 		w.ResponseWriter.Header().Del(pisces.HeaderContentEncoding)
 	}
-	w.Header().Del(pisces.HeaderContentLength)
+	w.Header().Del(pisces.HeaderContentLength) // Issue #444
 	w.ResponseWriter.WriteHeader(code)
 }
 
@@ -107,12 +110,11 @@ func (w *gzipResponseWriter) Write(b []byte) (int, error) {
 
 func (w *gzipResponseWriter) Flush() {
 	_ = w.Writer.(*gzip.Writer).Flush()
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
 }
 
 func (w *gzipResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return w.ResponseWriter.(http.Hijacker).Hijack()
-}
-
-func (w *gzipResponseWriter) CloseNotify() <-chan bool {
-	return w.ResponseWriter.(http.CloseNotifier).CloseNotify()
 }

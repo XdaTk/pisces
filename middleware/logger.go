@@ -2,7 +2,7 @@ package middleware
 
 import (
 	"github.com/sirupsen/logrus"
-	"github.com/xdatk/pisces"
+	"pisces"
 	"time"
 )
 
@@ -69,7 +69,7 @@ func LoggerWithConfig(config LoggerConfig) pisces.MiddlewareFunc {
 				"error":         err,
 				"latency":       stop.Sub(start),
 				"latency_human": stop.Sub(start),
-				"bytes_in":      pisces.HeaderContentLength,
+				"bytes_in":      res.Header().Get(pisces.HeaderContentLength),
 				"bytes_out":     res.Size,
 			}).Info()
 			return

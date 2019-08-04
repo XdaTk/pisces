@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 type (
@@ -103,9 +104,6 @@ type (
 		// JSON sends a JSON response with status code.
 		JSON(code int, i interface{}) error
 
-		// JSONPretty sends a pretty-print JSON with status code.
-		JSONPretty(code int, i interface{}, indent string) error
-
 		// JSONBlob sends a JSON blob response with status code.
 		JSONBlob(code int, b []byte) error
 
@@ -162,6 +160,7 @@ type (
 		handler  HandlerFunc
 		store    Map
 		pisces   *Pisces
+		lock     sync.RWMutex
 	}
 )
 
@@ -195,7 +194,7 @@ func (c *context) IsTLS() bool {
 
 func (c *context) IsWebSocket() bool {
 	upgrade := c.request.Header.Get(HeaderUpgrade)
-	return upgrade == "websocket" || upgrade == "Websocket"
+	return strings.ToLower(upgrade) == "websocket"
 }
 
 func (c *context) Scheme() string {
@@ -323,10 +322,15 @@ func (c *context) Cookies() []*http.Cookie {
 }
 
 func (c *context) Get(key string) interface{} {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
 	return c.store[key]
 }
 
 func (c *context) Set(key string, val interface{}) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+
 	if c.store == nil {
 		c.store = make(Map)
 	}
@@ -337,24 +341,19 @@ func (c *context) String(code int, s string) (err error) {
 	return c.Blob(code, MIMETextPlainCharsetUTF8, []byte(s))
 }
 
-func (c *context) JSON(code int, i interface{}) (err error) {
-	_, pretty := c.QueryParams()["pretty"]
-	if pretty {
-		return c.JSONPretty(code, i, "  ")
+func (c *context) json(code int, i interface{}, indent string) error {
+	enc := json.NewEncoder(c.response)
+	if indent != "" {
+		enc.SetIndent("", indent)
 	}
-	b, err := json.Marshal(i)
-	if err != nil {
-		return
-	}
-	return c.JSONBlob(code, b)
+	c.writeContentType(MIMEApplicationJSONCharsetUTF8)
+	c.response.Status = code
+	return enc.Encode(i)
 }
 
-func (c *context) JSONPretty(code int, i interface{}, indent string) (err error) {
-	b, err := json.MarshalIndent(i, "", indent)
-	if err != nil {
-		return
-	}
-	return c.JSONBlob(code, b)
+func (c *context) JSON(code int, i interface{}) (err error) {
+	indent := ""
+	return c.json(code, i, indent)
 }
 
 func (c *context) JSONBlob(code int, b []byte) (err error) {
