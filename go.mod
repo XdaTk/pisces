@@ -1,8 +1,8 @@
-module pisces
+module github.com/xdatk/pisces
 
-go 1.12
+go 1.13
 
 require (
 	github.com/sirupsen/logrus v1.4.2
-	github.com/stretchr/testify v1.3.0
+	github.com/stretchr/testify v1.2.2
 )

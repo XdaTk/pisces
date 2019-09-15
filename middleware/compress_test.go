@@ -3,11 +3,11 @@ package middleware
 import (
 	"bytes"
 	"compress/gzip"
+	"github.com/xdatk/pisces"
 	"io"
 	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
-	"pisces"
 	"testing"
 
 	"github.com/stretchr/testify/assert"

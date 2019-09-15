@@ -1,8 +1,8 @@
 package middleware
 
 import (
-	"pisces"
-	"pisces/middleware/random"
+	"github.com/xdatk/pisces"
+	"github.com/xdatk/pisces/middleware/random"
 )
 
 type (

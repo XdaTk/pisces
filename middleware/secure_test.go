@@ -2,9 +2,9 @@ package middleware
 
 import (
 	"github.com/stretchr/testify/assert"
+	"github.com/xdatk/pisces"
 	"net/http"
 	"net/http/httptest"
-	"pisces"
 	"testing"
 )
 

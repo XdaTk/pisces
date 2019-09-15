@@ -2,7 +2,7 @@ package middleware
 
 import (
 	"fmt"
-	"pisces"
+	"github.com/xdatk/pisces"
 )
 
 type (

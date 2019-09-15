@@ -3,11 +3,11 @@ package middleware
 import (
 	"bufio"
 	"compress/gzip"
+	"github.com/xdatk/pisces"
 	"io"
 	"io/ioutil"
 	"net"
 	"net/http"
-	"pisces"
 	"strings"
 )
 

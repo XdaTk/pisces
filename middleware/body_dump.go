@@ -3,11 +3,11 @@ package middleware
 import (
 	"bufio"
 	"bytes"
+	"github.com/xdatk/pisces"
 	"io"
 	"io/ioutil"
 	"net"
 	"net/http"
-	"pisces"
 )
 
 type (

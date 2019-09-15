@@ -2,10 +2,10 @@ package middleware
 
 import (
 	"errors"
+	"github.com/xdatk/pisces"
 	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
-	"pisces"
 	"strings"
 	"testing"
 

@@ -2,10 +2,10 @@ package middleware
 
 import (
 	"bytes"
+	"github.com/xdatk/pisces"
 	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
-	"pisces"
 	"testing"
 
 	"github.com/stretchr/testify/assert"

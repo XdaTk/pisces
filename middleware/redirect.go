@@ -1,8 +1,8 @@
 package middleware
 
 import (
+	"github.com/xdatk/pisces"
 	"net/http"
-	"pisces"
 )
 
 // RedirectConfig defines the config for Redirect middleware.

@@ -2,14 +2,14 @@ package middleware
 
 import (
 	"fmt"
+	"github.com/xdatk/pisces"
+	"github.com/xdatk/pisces/middleware/bytes"
 	"html/template"
 	"net/http"
 	"net/url"
 	"os"
 	"path"
 	"path/filepath"
-	"pisces"
-	"pisces/middleware/bytes"
 	"strings"
 )
 

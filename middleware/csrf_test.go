@@ -1,11 +1,11 @@
 package middleware
 
 import (
+	"github.com/xdatk/pisces"
+	"github.com/xdatk/pisces/middleware/random"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"pisces"
-	"pisces/middleware/random"
 	"strings"
 	"testing"
 

@@ -2,9 +2,9 @@ package middleware
 
 import (
 	"fmt"
+	"github.com/xdatk/pisces"
+	"github.com/xdatk/pisces/middleware/bytes"
 	"io"
-	"pisces"
-	"pisces/middleware/bytes"
 	"sync"
 )
 

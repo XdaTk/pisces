@@ -2,7 +2,7 @@ package middleware
 
 import (
 	"github.com/sirupsen/logrus"
-	"pisces"
+	"github.com/xdatk/pisces"
 	"time"
 )
 

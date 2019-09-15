@@ -1,9 +1,9 @@
 package main
 
 import (
+	"github.com/xdatk/pisces"
+	"github.com/xdatk/pisces/middleware"
 	"net/http"
-	"pisces"
-	"pisces/middleware"
 )
 
 func hello(p pisces.Context) error {
@@ -16,8 +16,8 @@ func main() {
 	p.Use(middleware.RequestID())
 	p.Use(middleware.Logger())
 	p.Use(middleware.StaticWithConfig(middleware.StaticConfig{
-		Root:    "static",
-		HTML5:   true,
+		Root:  "static",
+		HTML5: true,
 	}))
 
 	g := p.Group("/api")

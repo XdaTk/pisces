@@ -1,9 +1,9 @@
 package hello
 
 import (
+	"github.com/xdatk/pisces"
+	"github.com/xdatk/pisces/middleware"
 	"net/http"
-	"pisces"
-	"pisces/middleware"
 )
 
 func hello(p pisces.Context) error {

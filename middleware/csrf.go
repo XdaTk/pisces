@@ -3,9 +3,9 @@ package middleware
 import (
 	"crypto/subtle"
 	"errors"
+	"github.com/xdatk/pisces"
+	"github.com/xdatk/pisces/middleware/random"
 	"net/http"
-	"pisces"
-	"pisces/middleware/random"
 	"strings"
 	"time"
 )
