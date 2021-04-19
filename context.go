@@ -605,7 +605,7 @@ func (c *Context) Render(code int, r render.Render) (err error) {
 // JSON serializes the given struct as JSON into the response body.
 // It also sets the Content-Type as "application/json".
 func (c *Context) JSON(code int, obj interface{}) error {
-	return c.Render(code, render.JSON{Data: obj})
+	return c.Render(code, render.Json{Data: obj})
 }
 
 // Text writes the given string into the response body.

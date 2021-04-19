@@ -5,14 +5,14 @@ import (
 	"github.com/xdatk/pisces/internal/constant"
 )
 
-type JSON struct {
+type Json struct {
 	Data interface{}
 }
 
-func (j JSON) Render() ([]byte, error) {
+func (j Json) Render() ([]byte, error) {
 	return json.Marshal(j.Data)
 }
 
-func (j JSON) ContentType() string {
+func (j Json) ContentType() string {
 	return constant.MIMEApplicationJSONCharsetUTF8
 }
