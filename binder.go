@@ -9,13 +9,13 @@ import (
 )
 
 type Binder struct {
-	Param         binding.BindingParam
-	Header        binding.BindingHeader
-	Query         binding.BindingForm
-	Form          binding.BindingForm
-	PostForm      binding.BindingForm
-	MultipartFrom binding.BindingMultipartFrom
-	Body          map[string]binding.BindingBody
+	Param         binding.Param
+	Header        binding.Header
+	Query         binding.Form
+	Form          binding.Form
+	PostForm      binding.Form
+	MultipartFrom binding.MultipartFrom
+	Body          map[string]binding.Body
 }
 
 func (b Binder) Bind(c *Context, obj interface{}) error {

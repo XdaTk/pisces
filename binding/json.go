@@ -5,20 +5,20 @@ import (
 	"io"
 )
 
-type JSON struct {
+type JsonBodyBinding struct {
 	EnableDecoderUseNumber             bool
 	EnableDecoderDisallowUnknownFields bool
 }
 
-func (j JSON) Name() string {
+func (j JsonBodyBinding) Name() string {
 	return "json"
 }
 
-func (j JSON) Bind(body io.ReadCloser, obj interface{}) error {
+func (j JsonBodyBinding) Bind(body io.ReadCloser, obj interface{}) error {
 	return j.decode(body, obj)
 }
 
-func (j JSON) decode(r io.Reader, obj interface{}) error {
+func (j JsonBodyBinding) decode(r io.Reader, obj interface{}) error {
 	decoder := json.NewDecoder(r)
 	if j.EnableDecoderUseNumber {
 		decoder.UseNumber()

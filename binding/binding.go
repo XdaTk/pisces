@@ -7,27 +7,27 @@ import (
 	"net/url"
 )
 
-type BindingParam interface {
+type Param interface {
 	Name() string
 	Bind(params map[string][]string, obj interface{}) error
 }
 
-type BindingForm interface {
+type Form interface {
 	Name() string
 	Bind(values url.Values, obj interface{}) error
 }
 
-type BindingHeader interface {
+type Header interface {
 	Name() string
 	Bind(header http.Header, obj interface{}) error
 }
 
-type BindingMultipartFrom interface {
+type MultipartFrom interface {
 	Name() string
 	Bind(form *multipart.Form, obj interface{}) error
 }
 
-type BindingBody interface {
+type Body interface {
 	Name() string
 	Bind(body io.ReadCloser, obj interface{}) error
 }
