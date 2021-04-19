@@ -110,7 +110,7 @@ func (c *Context) GetParam(key string) (string, bool) {
 	return c.GetParams().Get(key)
 }
 
-// Params returns URI params.
+// GetParams returns URI params.
 func (c *Context) GetParams() Params {
 	return c.params
 }
@@ -202,7 +202,7 @@ func (c *Context) UserAgent() string {
 	return c.Request.UserAgent()
 }
 
-// IsWebsocket returns true if the request headers indicate that a websocket
+// IsWebSocket returns true if the request headers indicate that a websocket
 // handshake is being initiated by the client.
 func (c *Context) IsWebSocket() bool {
 	upgrade := c.Header(constant.HeaderUpgrade)
@@ -276,7 +276,7 @@ func (c *Context) GetQuerys() url.Values {
 	return c.queryCache
 }
 
-// GetPostForm returns value for a given form key.
+// Form returns value for a given form key.
 func (c *Context) Form(key string) (string, error) {
 	value, _, err := c.GetForm(key)
 	return value, err
@@ -326,7 +326,7 @@ func (c *Context) GetForms() (url.Values, error) {
 	}
 }
 
-// GetPostForm returns value for a given post form key.
+// PostForm returns value for a given post form key.
 func (c *Context) PostForm(key string) (string, error) {
 	value, _, err := c.GetPostForm(key)
 	return value, err
@@ -448,8 +448,8 @@ func (c *Context) BindQuery(obj interface{}) error {
 	return c.engine.binder.Form.Bind(c.GetQuerys(), obj)
 }
 
-// BindFormUseCustom is binding request form to obj use custom BindingForm.
-func (c *Context) BindQueryUseCustom(binder binding.BindingForm, obj interface{}) error {
+// BindQueryUseCustom is binding request form to obj use custom BindingForm.
+func (c *Context) BindQueryUseCustom(binder binding.Form, obj interface{}) error {
 	return binder.Bind(c.GetQuerys(), obj)
 }
 
@@ -458,8 +458,8 @@ func (c *Context) BindHeader(obj interface{}) error {
 	return c.engine.binder.Header.Bind(c.GetHeaders(), obj)
 }
 
-// BindFormUseCustom is binding request form to obj use custom BindingHeader.
-func (c *Context) BindHeaderUseCustom(binder binding.BindingHeader, obj interface{}) error {
+// BindHeaderUseCustom is binding request form to obj use custom BindingHeader.
+func (c *Context) BindHeaderUseCustom(binder binding.Header, obj interface{}) error {
 	return binder.Bind(c.GetHeaders(), obj)
 }
 
@@ -473,7 +473,7 @@ func (c *Context) BindForm(obj interface{}) error {
 }
 
 // BindFormUseCustom is binding request form to obj use custom BindingForm.
-func (c *Context) BindFormUseCustom(binder binding.BindingForm, obj interface{}) error {
+func (c *Context) BindFormUseCustom(binder binding.Form, obj interface{}) error {
 	form, err := c.GetForms()
 	if err != nil {
 		return err
@@ -490,8 +490,8 @@ func (c *Context) BindPostForm(obj interface{}) error {
 	return c.engine.binder.PostForm.Bind(froms, obj)
 }
 
-// BindPostForm is binding request post form to obj use custom BindingForm.
-func (c *Context) BindPostFormUseCustom(binder binding.BindingForm, obj interface{}) error {
+// BindPostFormUseCustom is binding request post form to obj use custom BindingForm.
+func (c *Context) BindPostFormUseCustom(binder binding.Form, obj interface{}) error {
 	form, err := c.GetPostForms()
 	if err != nil {
 		return err
@@ -509,7 +509,7 @@ func (c *Context) BindMultipartFrom(obj interface{}) error {
 }
 
 // BindMultipartFromUseCustom is binding request multipart form to obj use custom BindingMultipartFrom.
-func (c *Context) BindMultipartFromUseCustom(binder binding.BindingMultipartFrom, obj interface{}) error {
+func (c *Context) BindMultipartFromUseCustom(binder binding.MultipartFrom, obj interface{}) error {
 	form, err := c.GetMultipartForms()
 	if err != nil {
 		return err
@@ -517,7 +517,7 @@ func (c *Context) BindMultipartFromUseCustom(binder binding.BindingMultipartFrom
 	return binder.Bind(form, obj)
 }
 
-// BindParam is binding request body to obj.
+// BindBody is binding request body to obj.
 func (c *Context) BindBody(obj interface{}) error {
 	binder, ok := c.engine.binder.Body[c.ContentType()]
 	if !ok {
@@ -528,7 +528,7 @@ func (c *Context) BindBody(obj interface{}) error {
 }
 
 // BindBodyUseCustom is binding request body to obj use custom bindingBody.
-func (c *Context) BindBodyUseCustom(binder binding.BindingBody, obj interface{}) error {
+func (c *Context) BindBodyUseCustom(binder binding.Body, obj interface{}) error {
 	return binder.Bind(c.Body(), obj)
 }
 
@@ -590,7 +590,7 @@ func (c *Context) renderCodeAndContentType(code int, contentType string) error {
 
 // Render writes the response headers and calls Render to render data.
 func (c *Context) Render(code int, r render.Render) (err error) {
-	err =c.renderCodeAndContentType(code, r.ContentType())
+	err = c.renderCodeAndContentType(code, r.ContentType())
 	if err != nil {
 		return err
 	}

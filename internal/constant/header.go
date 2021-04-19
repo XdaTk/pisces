@@ -31,7 +31,6 @@ const (
 	HeaderServer              = "Server"
 	HeaderOrigin              = "Origin"
 
-	// Access control
 	HeaderAccessControlRequestMethod    = "Access-Control-Request-Method"
 	HeaderAccessControlRequestHeaders   = "Access-Control-Request-Headers"
 	HeaderAccessControlAllowOrigin      = "Access-Control-Allow-Origin"
@@ -41,7 +40,6 @@ const (
 	HeaderAccessControlExposeHeaders    = "Access-Control-Expose-Headers"
 	HeaderAccessControlMaxAge           = "Access-Control-Max-Age"
 
-	// Security
 	HeaderStrictTransportSecurity         = "Strict-Transport-Security"
 	HeaderXContentTypeOptions             = "X-Content-Type-Options"
 	HeaderXXSSProtection                  = "X-XSS-Protection"
