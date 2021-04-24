@@ -171,7 +171,7 @@ func (e *Engine) handleHTTPRequest(c *Context) {
 	}
 
 	if c.handler == nil {
-		c.handler = notFoundHandler
+		c.handler = e.notFoundHandler
 	}
 
 	err := c.handler(c)
