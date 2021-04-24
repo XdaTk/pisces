@@ -12,7 +12,8 @@ import (
 type Engine struct {
 	RouterGroup
 
-	errorHandler ErrorHandler
+	notFoundHandler HandlerFunc
+	errorHandler    ErrorHandler
 
 	binder    Binder
 	validator Validator
@@ -28,14 +29,19 @@ func New() *Engine {
 			root:     true,
 			basePath: "/",
 		},
-		errorHandler: DefaultErrorHandler,
-		trees:        make(methodTrees, 0, 9),
+		notFoundHandler: notFoundHandler,
+		errorHandler:    DefaultErrorHandler,
+		trees:           make(methodTrees, 0, 9),
 	}
 	engine.RouterGroup.engine = engine
 	engine.pool.New = func() interface{} {
 		return engine.allocateContext()
 	}
 	return engine
+}
+
+func (e *Engine) NoRoute(handler HandlerFunc) {
+	e.notFoundHandler = handler
 }
 
 func (e *Engine) allocateContext() *Context {
